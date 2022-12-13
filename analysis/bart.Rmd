@@ -1,0 +1,121 @@
+---
+title: "kaggle"
+output: pdf_document
+date: "2022-11-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidymodels)
+library(xgboost)
+library(randomForest)
+library(glmnet)
+library(vip)
+library(dbarts)
+library(doParallel)
+doParallel::registerDoParallel()
+source('0 Functions.R')
+
+# Load the Data
+ship_imp_nores <- read.csv('/Users/coco/Documents/GitHub/spaceship-titanic/data/ship_imputed_no_response.csv')
+
+# Format the Data
+
+ship_imp_nores <- setColTypesForModeling(ship_imp_nores)
+train <- ship_imp_nores[ship_imp_nores$Train == 'TRUE',]
+test <- ship_imp_nores[ship_imp_nores$Train == 'FALSE',]
+
+
+# Get the Columns and Calculate the Number of Columns in the Model Matrix
+cols <-
+  c(
+    'Age',
+    'CabinSize',
+    'CryoSleep',
+    'Deck',
+    'Destination',
+    'GID',
+    'GroupSize',
+    'HasSpent',
+    'HomePlanet',
+    'IID',
+    'Num',
+    'RoomService',
+    'ShoppingMall',
+    'Side',
+    'Spa',
+    'Spending',
+    'Transported',
+    'VIP',
+    'VRDeck'
+  )
+num_cols <- numDesignMatColsFromDataset(train[, cols])
+
+# Create the Recipe
+rec <- recipe(Transported ~ ., data = train[, cols]) %>%
+  step_dummy(all_nominal_predictors())
+
+#rec_interact <- rec %>% step_interact(~all_predictors():all_predictors())
+
+# Create the Folds
+set.seed(1)
+folds <- vfold_cv(train[, cols])
+
+```
+
+
+
+```{r}
+# bart
+library(dplyr)
+
+bart_spec <- bart(
+  trees = tune(),
+  prior_terminal_node_coef = tune(),
+  prior_terminal_node_expo = tune(),
+  prior_outcome_range = tune())  %>% 
+  set_mode('classification') %>% 
+  set_engine('dbarts')
+
+
+
+bart_wf <- workflow() %>%
+  add_model(bart_spec) %>%
+  add_recipe(rec)
+
+bart_grid <- grid_latin_hypercube(
+  trees(),
+  prior_terminal_node_coef(), 
+  prior_terminal_node_expo(),
+  prior_outcome_range(),
+  size = 200
+)
+
+bart_res <- bart_wf %>%
+  tune_grid(resamples = folds,
+            grid = bart_grid,
+            control = control_grid(save_pred = T))
+
+
+bart_best <- select_best(bart_res, 'accuracy')
+bart_oos_pred <- do.call(rbind, lapply(bart_res$.predictions, function(x){x[x$.config == bart_best$.config, c('.row', '.pred_TRUE')]}))
+bart_oos_pred <- bart_oos_pred[order(bart_oos_pred$.row), ]
+#savePredictions(train$PassengerId, bart_oos_pred$.pred_TRUE, 'bart_oos')
+
+
+bart_final_wf <- bart_wf %>% 
+  finalize_workflow(select_best(bart_res, "accuracy"))
+bart_final_fit <- bart_final_wf %>% fit(train)
+bart_pred <- predict(bart_final_fit, test, type = 'prob')$.pred_TRUE
+
+setwd("~/Documents/GitHub/Spaceship-titanic/")
+savePredictions(test$PassengerId, bart_pred, "bart_1")
+submiss <- data.frame(PassengerId = test$PassengerId,
+                      Transported = as.character(ifelse(bart_pred >=0.5, "True", "False")))
+write.csv(submiss, "sub2.csv", quote = F, row.names = F)
+
+```
+

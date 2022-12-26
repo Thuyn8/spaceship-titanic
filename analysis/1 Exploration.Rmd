@@ -14,6 +14,7 @@ library(visdat)
 library(naniar)
 library(nullabor)
 library(ggplot2)
+library(naniar)
 theme_set(theme_classic())
 source('0 Functions.R')
 knitr::opts_knit$set(echo = TRUE, root.dir = 'C:/Users/User/Documents/Projects/Kaggle/spaceship-titanic')
@@ -48,6 +49,7 @@ vis_dat(ship[, original_cols])
 vis_miss(ship[, setdiff(original_cols, 'Transported')])
 mcar_test(ship)
 mcar_test(ship[, setdiff(original_cols, 'Transported')])
+gg_miss_var(ship)
 ```
 
 # Add Columns
